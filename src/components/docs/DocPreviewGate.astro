@@ -24,6 +24,7 @@ const { unlockRequired = true } = Astro.props;
   const turnstileBox = document.querySelector('[data-turnstile-box]');
   let siteKey = '';
   let loadingConfig = null;
+  let verifyingToken = false;
   function unlock() { content?.classList.remove('collapsed'); fade?.remove(); modal.hidden = true; }
   async function checkStatus() {
     try { const res = await fetch('/api/unlock/status'); const data = await res.json(); if (data.unlocked) unlock(); } catch (_) {}
@@ -42,6 +43,8 @@ const { unlockRequired = true } = Astro.props;
     return loadingConfig;
   }
   async function verify(token) {
+    if (!token || verifyingToken) return;
+    verifyingToken = true;
     message.textContent = '正在验证...';
     try {
       const res = await fetch('/api/turnstile/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) });
@@ -49,6 +52,12 @@ const { unlockRequired = true } = Astro.props;
       if (data.ok) { message.textContent = '验证通过，已展开全文。'; unlock(); return; }
       message.textContent = data.message || '验证失败，请刷新后重试。';
     } catch (_) { message.textContent = '网络异常，请稍后重试。'; }
+    finally { verifyingToken = false; }
+  }
+  function verifyHiddenResponse() {
+    const input = turnstileBox?.querySelector('input[name="cf-turnstile-response"]');
+    const token = input?.value;
+    if (token) verify(token);
   }
   async function loadTurnstile() {
     await loadConfig();
@@ -70,8 +79,19 @@ const { unlockRequired = true } = Astro.props;
     if (!siteKey || window.turnstile) {
       if (window.turnstile && turnstileBox && !turnstileBox.dataset.rendered) {
         turnstileBox.textContent = '';
-        window.turnstile.render(turnstileBox, { sitekey: siteKey, callback: verify });
+        window.turnstile.render(turnstileBox, {
+          sitekey: siteKey,
+          callback: verify,
+          'error-callback': () => {
+            message.textContent = 'Turnstile 无法连接到验证服务。请关闭广告拦截/代理后刷新，或换一个网络重试。';
+          },
+          'timeout-callback': () => {
+            message.textContent = '验证超时，请刷新后重试。';
+          },
+        });
         turnstileBox.dataset.rendered = 'true';
+        setTimeout(verifyHiddenResponse, 1200);
+        setTimeout(verifyHiddenResponse, 3000);
       }
       return;
     }
